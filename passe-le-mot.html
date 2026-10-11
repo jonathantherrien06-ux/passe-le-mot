@@ -131,6 +131,7 @@ input.code{font-family:var(--display);font-size:1.8rem;letter-spacing:.35em;text
         <li>Quand son équipe trouve, il appuie sur <b>Trouvé</b> et le mot suivant apparaît chez un joueur de l'autre équipe.</li>
         <li><b>Passer</b> change le mot, mais tu le gardes.</li>
         <li>Quand ça sonne, l'équipe de celui qui a le mot perd, l'autre marque 1 point. Elle peut ensuite deviner le dernier mot pour un bonus : celui qui avait le mot tranche, puis le mot est révélé à tous.</li>
+        <li>La manche suivante repart avec le joueur qui avait le mot quand ça a sonné. Le son joue seulement sur le téléphone de l'hôte, alors montez son volume.</li>
       </ol></div>
     </details>
   </div>
@@ -2759,6 +2760,7 @@ function show(id){ screens.forEach(s=>$(s).hidden=(s!==id)); window.scrollTo(0,0
 let ctx=null;
 function audio(){ if(!ctx){ try{ ctx=new (window.AudioContext||window.webkitAudioContext)(); }catch(e){} } if(ctx&&ctx.state==="suspended") ctx.resume(); return ctx; }
 function tone(freq,ms,type="square",gain=.12){
+  if(role!=="host") return; // le son joue seulement sur le téléphone de l'hôte
   const c=audio(); if(!c||c.state!=="running") return;
   const o=c.createOscillator(), g=c.createGain();
   o.type=type; o.frequency.value=freq; g.gain.value=gain;
@@ -2817,7 +2819,7 @@ function hostInit(code){
   H={code,players:{},order:[],phase:"lobby",hostPlays:$("cPlays").checked,
      cats:cfg.cats.slice(),dur:cfg.dur,target:cfg.target,scores:{A:0,B:0},round:1,
      deck:[],word:null,holderPid:null,found:0,endAt:0,timer:null,rr:{A:0,B:0},
-     startTeam:Math.random()<.5?"A":"B",lastWord:null,loser:null,winner:null,stealPending:false,gameWinner:null};
+     startTeam:Math.random()<.5?"A":"B",lastWord:null,loser:null,winner:null,stealPending:false,gameWinner:null,nextHolder:null};
   if(H.hostPlays) hostAddPlayer({pid:cfg.pid,name:cfg.name,team:cfg.team});
 }
 function hostAddPlayer(p){
@@ -2886,7 +2888,8 @@ function hostCanStart(){ return hostTeamList("A").length>=1 && hostTeamList("B")
 function hostStartRound(){
   const [a,b]=DUR[H.dur]; const secs=a+Math.random()*(b-a);
   H.endAt=Date.now()+secs*1000; H.found=0; H.phase="play"; H.stealPending=false; H.gameWinner=null;
-  H.holderPid=hostNextIn(H.startTeam); if(!H.holderPid){ H.phase="lobby"; broadcast(); return; }
+  const st=H.nextHolder?H.players[H.nextHolder]:null; // on repart avec celui qui est mort avec le mot
+  H.holderPid=(st&&st.online)?st.pid:hostNextIn(H.startTeam); if(!H.holderPid){ H.phase="lobby"; broadcast(); return; }
   hostNextWord();
   clearTimeout(H.timer); H.timer=setTimeout(hostEndRound, secs*1000);
   broadcast();
@@ -2901,7 +2904,7 @@ function hostSkip(){ hostNextWord(); broadcast(); }
 function hostEndRound(){
   clearTimeout(H.timer);
   const lp=H.players[H.holderPid]; const loser=lp?lp.team:"A"; const winner=other(loser);
-  H.scores[winner]++; H.phase="roundend"; H.lastWord=H.word?H.word.w:""; H.loser=loser; H.winner=winner; H.stealPending=true; H.startTeam=winner;
+  H.scores[winner]++; H.phase="roundend"; H.lastWord=H.word?H.word.w:""; H.loser=loser; H.winner=winner; H.stealPending=true; H.startTeam=winner; H.nextHolder=H.holderPid;
   broadcast({t:"buzz"});
 }
 function hostSteal(yes){
@@ -3011,13 +3014,12 @@ function applyState(s){
     $("wordcard").hidden=!isMe; $("foundBtn").hidden=!isMe; $("skipBtn").hidden=!isMe; $("watch").hidden=isMe;
     $("stopBtn").hidden=(role!=="host");
     localEnd=Date.now()+(s.remaining||0);
+    if(prevHolder!==s.holderPid&&(isMe||role==="host")) ding();
+    if(role==="host") startBeeps(); else stopBeeps();
     if(isMe){
       const w=s.word?s.word.w:"";
       if(w!==prevWord){ $("word").textContent=w; $("wordcat").textContent=s.word?s.word.c:""; hideHint(); const p=$("pulse"); p.classList.remove("on"); void p.offsetWidth; p.classList.add("on"); }
-      if(prevHolder!==me) ding();
-      startBeeps();
     } else {
-      stopBeeps();
       $("watch").className="watch "+team;
       $("watchWho").textContent=holder?holder.name:"…";
       const mine=s.players.find(p=>p.pid===me);
@@ -3080,7 +3082,7 @@ function renderLobby(){
   else setStatus("lStatus","En attente que l'hôte démarre la partie…");
 }
 
-// ---------- Bips (seulement sur le téléphone qui a le mot) ----------
+// ---------- Bips (seulement sur le téléphone de l'hôte) ----------
 function startBeeps(){ if(beepTimer) return; beepLoop(); }
 function stopBeeps(){ clearTimeout(beepTimer); beepTimer=null; }
 function beepLoop(){
